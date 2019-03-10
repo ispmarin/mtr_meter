@@ -1,8 +1,7 @@
-import subprocess
 import shlex
-import pandas as pd
 import logging
-
+import subprocess
+import pandas as pd
 from io import StringIO
 
 
@@ -58,7 +57,6 @@ def measure_mtr(host: str, n_measurements: int = 10):
     try:
         logger.info("Running data collection for host {}".format(host))
         response = run_mtr(n_measurements, host)
-        print(response.stdout)
         df_parsed = parse_mtr_response(response)
         return df_parsed
     except subprocess.TimeoutExpired:
@@ -73,6 +71,8 @@ def measure_mtr(host: str, n_measurements: int = 10):
 
 
 if __name__ == "__main__":
+    df = pd.DataFrame()
 
-    df = measure_mtr('terra.com.br', 2)
-    print(df)
+    for i in range(3):
+        df = df.append(measure_mtr('terra.com.br', 2))
+    print(df.groupby('start_time').last())
