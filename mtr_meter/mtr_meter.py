@@ -1,7 +1,9 @@
 import shlex
 import logging
+import time
 import subprocess
 import pandas as pd
+from bokeh import plotting as bkp
 from io import StringIO
 
 
@@ -28,7 +30,8 @@ def run_mtr(n_measurements, host):
 
 
 def parse_mtr_response(mtr_response: subprocess.CompletedProcess):
-    if mtr_response.stderr.strip() == 'Failed to resolve host: Name or service not known':
+    if mtr_response.stderr.strip() == 'Failed to resolve host: Name or service not known' or \
+        mtr_response.stderr.strip() == 'Failed to resolve host: Temporary failure in name resolution':
         raise FileNotFoundError
     df_mtr = pd.read_csv(StringIO(mtr_response.stdout))
     df_mtr.drop(['Mtr_Version', 'Unnamed: 14'], axis=1, inplace=True)
@@ -67,12 +70,16 @@ def measure_mtr(host: str, n_measurements: int = 10):
         logger.error("Error in the mtr command")
     except FileNotFoundError:
         logger.error("Could not find mtr command or host '{}' invalid".format(host))
+    exit(-1)
 
 
+def create_graph(df):
+    p = bkp.figure()
 
 if __name__ == "__main__":
     df = pd.DataFrame()
 
-    for i in range(3):
-        df = df.append(measure_mtr('terra.com.br', 2))
-    print(df.groupby('start_time').last())
+    while True:
+        df = df.append(measure_mtr('terra.com.br', 10))
+        df.groupby('start_time').last().to_csv('mtr_meter.csv', sep=';', encoding='utf-8')
+        #time.sleep(60*5)
