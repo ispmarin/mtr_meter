@@ -1,6 +1,7 @@
 import shlex
 import logging
 import time
+import argparse
 import subprocess
 import pandas as pd
 from bokeh import plotting as bkp
@@ -15,24 +16,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_mtr(n_measurements, host):
-    """Run mtr command
+class FailedResolveHost(Exception):
+    pass
 
-    n_measurements
-        Number of measurements for mtr to run
-    host
-        Host to run the measurements
-    return
-        subprocess.CompletedProcess instance
-    """
+
+class TemporaryFailureResolveHost(Exception):
+    pass
+
+
+def run_mtr(host: str, n_measurements: int):
+    logger.info("Running data collection for host {}".format(host))
     mtr_cmd = shlex.split('mtr -C -c {} {}'.format(n_measurements, host))
-    return subprocess.run(mtr_cmd, capture_output=True, timeout=360, check=True, encoding='utf-8')
+    response = subprocess.run(mtr_cmd, capture_output=True, timeout=360, check=True, encoding='utf-8')
+    if response.stderr.strip() == 'Failed to resolve host: Name or service not known':
+        raise FailedResolveHost
+    if response.stderr.strip() == 'Failed to resolve host: Temporary failure in name resolution':
+        raise TemporaryFailureResolveHost
+    return response
 
 
 def parse_mtr_response(mtr_response: subprocess.CompletedProcess):
-    if mtr_response.stderr.strip() == 'Failed to resolve host: Name or service not known' or \
-        mtr_response.stderr.strip() == 'Failed to resolve host: Temporary failure in name resolution':
-        raise FileNotFoundError
     df_mtr = pd.read_csv(StringIO(mtr_response.stdout))
     df_mtr.drop(['Mtr_Version', 'Unnamed: 14'], axis=1, inplace=True)
     df_mtr.rename(columns={' ':'dropped' }, inplace=True)
@@ -41,45 +44,35 @@ def parse_mtr_response(mtr_response: subprocess.CompletedProcess):
     return df_mtr
 
 
-def measure_mtr(host: str, n_measurements: int = 10):
-    """Do n mtr measurements on host.
+def run_measurement(host: str, n_measurements: int, retries: int = 100):
+    df_result = pd.DataFrame()
 
-    Parameters
-    ----------
-    host
-        The host used to measure the latency. It can be an URL or IP address
+    while retries > 0:
+        try:
+            mtr_response = run_mtr(host, n_measurements)
+            df_result  = df_result.append(parse_mtr_response(mtr_response))
+        except TemporaryFailureResolveHost:
+            logger.warning('No connection, will retry {} times'.format(retries))
+            time.sleep(3)
+            retries = retries - 1
+            continue
+        except FailedResolveHost:
+            logger.error("Host '{}' not found".format(host))
+            return df_result
+        except KeyboardInterrupt:
+            break
 
-    n_measurements
-        The number of measurements that mtr do before registering the result. Default is 10.
-
-    Return
-    ------
-        Returns a Pandas data frame with the results
-    """    
-
-    try:
-        logger.info("Running data collection for host {}".format(host))
-        response = run_mtr(n_measurements, host)
-        df_parsed = parse_mtr_response(response)
-        return df_parsed
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout")
-    except subprocess.CalledProcessError:
-        logger.error("Process exited with non-zero code")
-    except subprocess.SubprocessError:
-        logger.error("Error in the mtr command")
-    except FileNotFoundError:
-        logger.error("Could not find mtr command or host '{}' invalid".format(host))
-    exit(-1)
-
+    return df_result
 
 def create_graph(df):
     p = bkp.figure()
 
 if __name__ == "__main__":
-    df = pd.DataFrame()
 
-    while True:
-        df = df.append(measure_mtr('terra.com.br', 10))
-        df.groupby('start_time').last().to_csv('mtr_meter.csv', sep=';', encoding='utf-8')
-        #time.sleep(60*5)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-u", '--host')
+    parser.add_argument('-n', '--n_measurements')
+    args = parser.parse_args()
+    df= run_measurement(args.host, args.n_measurements, 2)
+    print(df)
+    #print(df_lasthop)
