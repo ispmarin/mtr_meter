@@ -44,16 +44,17 @@ def parse_mtr_response(mtr_response: subprocess.CompletedProcess):
     return df_mtr
 
 
-def run_measurement(host: str, n_measurements: int, retries: int = 100):
+def run_measurement(host: str, n_measurements: int, retries: int = 100, sleep_time: int = 300):
     df_result = pd.DataFrame()
 
     while retries > 0:
         try:
             mtr_response = run_mtr(host, n_measurements)
             df_result  = df_result.append(parse_mtr_response(mtr_response))
+            time.sleep(sleep_time)
         except TemporaryFailureResolveHost:
             logger.warning('No connection, will retry {} times'.format(retries))
-            time.sleep(3)
+            time.sleep(sleep_time)
             retries = retries - 1
             continue
         except FailedResolveHost:
@@ -72,7 +73,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-u", '--host')
     parser.add_argument('-n', '--n_measurements')
+    parser.add_argument('-r', '--retries', type = int)
     args = parser.parse_args()
-    df= run_measurement(args.host, args.n_measurements, 2)
-    print(df)
+    df= run_measurement(args.host, args.n_measurements, args.retries)
+    df.groupby('start_time').last().to_csv('mtr_meter.csv', encoding='utf-8', sep=';')
     #print(df_lasthop)
